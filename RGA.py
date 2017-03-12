@@ -1,23 +1,127 @@
+#!/usr/bin/python
+
+"""
+Revelancy Grader Assistant
+
+This script automate scraping the number of indexed page in Google for
+advanced searches.
+
+More info at: https://thomaslecoz.com/improving-guest-post-efficiency/
+"""
+
 ## Imports
-import time, sys, os, re, random
+import time
+import sys
+import os
+import re
+import random
 import urllib
 import requests
+import threading
+import Queue
+from pprint import pprint
 from bs4 import BeautifulSoup
 
 ## Settings
-
-##### Files
 LINKS_FILENAME = 'links.txt'
 RESULTS_FILENAME = 'results.txt'
+PROXY_LIST_FILENAME = 'proxies.txt'
 
-##### Timing
 RANDOM_TIME_MIN = 20.1
 RANDOM_TIME_MAX = 60.0
 
-#### Browser Config
 BROWSER_HEADERS = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36', 'referer': 'https://www.google.com/search'}
 
-## Functions
+class indexScraperThread(threading.Thread):
+	"""
+	The index scraper class helps distribute the load amongst proxified
+	threads
+	"""
+	def __init__(self, scraperId, urls, proxy):
+		threading.Thread.__init__(self)
+		self.scraperId = scraperId
+    	self.urls = urls
+    	self.proxy = proxy
+
+	def run(self):
+		print "Starting " + self.__name_
+		# Parse URL List, quit when done
+		print "Exiting " + self.name
+
+	def getPage(url, proxies):
+		"""
+		Return the page text of the web page corresponding to the
+		given URL
+		@params:
+			url 	- Required : URL of the web page to get
+			proxies - Required : http and https proxies to use for the requests
+		"""
+		try:
+		    page = requests.get(url, proxies=proxies, headers=BROWSER_HEADERS)
+		    page.encoding = 'utf-8'
+		    return page.text
+		    
+		except requests.exceptions.RequestException as e: 
+		    #print '[-] ' + str(e)
+		    return False
+		
+
+	def getNumberIndexedPages(page):
+		"""
+		Returns the number of pages in the index of google
+		for the given page text.
+		@params:
+			page - Required : web page text from requests
+		"""
+		content = BeautifulSoup(page, "html.parser")
+		stat_phrase = content.find("div", {"id": "resultStats"})
+		res_index = re.search(r'\d{1,3}(,\d{3})*(\.\d+)?', str(stat_phrase))
+		if res_index is not None:
+			number_indexed_pages = filter(None, res_index.group())
+		else:
+			print '\n\n[-] Coudln\'t find the number of pages of the Google index. Two possibilities: first, your IP might have been temporarily flagged by Google, wait 2 hours or use a VPN to solve this. The other possibility is that there\'s a bad link in your ' + str(LINKS_FILENAME) + ' file.'
+			sys.exit()
+			
+		return number_indexed_pages
+
+def readProxies(proxyList):
+	"""
+	Reads the proxy list  (ip:port:login:pass)and returns the proxies
+	available and their	formating for python requests.
+	@params:
+		proxyList - Required : name of the file with the proxies
+	"""
+	proxyResult = []
+
+	try:
+		with open(proxyList) as f:
+			for proxyLine in f.read().splitlines():
+				proxyCoord = re.split(':',proxyLine)
+				formattedProxy = 'http://' + proxyCoord[2] + ':' + proxyCoord[3] + '@' + proxyCoord[0] + ':' + proxyCoord[1]
+				proxyResult.append(formattedProxy)
+	except EnvironmentError:
+		print '[-] Couldn\'t find ' + PROXY_LIST_FILENAME + ' in the working direcotry.'
+		sys.exit()
+
+	return proxyResult
+
+def createWorkList(fname):
+	"""
+	Returns the list of links and their corresponding index number.
+	@params:
+		linksFile  - Required : file with the links
+	"""
+	linksDictionnary = {}
+	try:
+		with open(fname) as f:
+			for link in f.read().splitlines():
+				linksDictionnary[link] = '' # Adds empty links in the dictionnary
+	except EnvironmentError:
+			print '[-] Couldn\'t find ' + LINKS_FILENAME + ' in the working directory.'
+			sys.exit()
+
+	return linksDictionnary
+
 def printProgress (iteration, total, prefix = '', suffix = '', decimals = 1, barLength = 100, fill = '#'):
     """
     Call in a loop to create terminal progress bar
@@ -37,46 +141,27 @@ def printProgress (iteration, total, prefix = '', suffix = '', decimals = 1, bar
         sys.stdout.write('\n')
     sys.stdout.flush()
 
-def file_len(fname):
-	try:
-		with open(fname) as f:
-			for i, l in enumerate(f):
-				pass
-	except EnvironmentError:
-		print '[-] Couldn\'t find ' + LINKS_FILENAME + ' in the working directory.'
-		sys.exit()
-
-	return i + 1
-
 def op_duration(file_len, RANDOM_TIME_MIN=RANDOM_TIME_MIN, RANDOM_TIME_MAX=RANDOM_TIME_MAX):
 	min_time = ( file_len * RANDOM_TIME_MIN ) / 3600
 	max_time = ( file_len * RANDOM_TIME_MAX ) / 3600
 	duration = [round(min_time,2), round(max_time, 2)]
 	return duration
 
-def getPage(url):
-	try:
-	    page = requests.get(url, headers=BROWSER_HEADERS)
-	    page.encoding = 'utf-8'
-	    return page.text
-	    
-	except requests.exceptions.RequestException as e: 
-	    #print '[-] ' + str(e)
-	    return False
-	
+def writeResults(fname, worklist):
+	"""
+	Writes the results in an orderly manner
+	@params:
+		fname    - Required : the results filename
+		worklist - Required : the completed worklist
+	"""
+	results_file = open(fname, 'w')
+	for link, indexNum in worklist.iteritems():
+		if indexNum is not None:
+			results_file.write(str(indexNum) + '\n')
+		else:
+			results_file.write('\n')
 
-def getNumberIndexedPages(page):
-	content = BeautifulSoup(page, "html.parser")
-	stat_phrase = content.find("div", {"id": "resultStats"})
-	res_index = re.search(r'\d{1,3}(,\d{3})*(\.\d+)?', str(stat_phrase))
-	if res_index is not None:
-		number_indexed_pages = filter(None, res_index.group())
-	else:
-		print '\n\n[-] Coudln\'t find the number of pages of the Google index. Two possibilities: first, your IP might have been temporarily flagged by Google, wait 2 hours or use a VPN to solve this. The other possibility is that there\'s a bad link in your ' + str(LINKS_FILENAME) + ' file.'
-		sys.exit()
-		
-	return number_indexed_pages
-
+	return True
 
 ## Main Process
 def Main():
@@ -84,6 +169,41 @@ def Main():
 	print '\nRevelancy Grader Assistant (RGA)\n'
 	print '[+] Welcome, starting work right now. Note that there are long preiods of pause between link explorations, you might think the script has stalled, but it probably didn\'t'
 
+	proxies = readProxies(PROXY_LIST_FILENAME)
+	workList = createWorkList(LINKS_FILENAME)
+
+	links = len(workList)
+	if links == 0:
+		print '[-] No links found in ' + LINKS_FILENAME + '. Exiting.'
+		sys.exit()
+
+	threads = []
+
+	# Wait for all threads to finish
+	for t in threads:
+    	t.join()
+
+    # TODO : create as many threads as we have proxies
+    workListShare = int(links / proxies)
+    for i, proxy in proxies:
+    	# scraperThread = indexScraperThread(scaperID, urls, workQueue)
+    	# scraperThread.start()
+    	# scraperID += 1
+    	# threads.append(scraperThread)
+    	pass
+
+	# End of job, output results in a file
+	if writeResults(RESULTS_FILENAME,workList):
+		print '[+] Success, all done!'
+		results_file.close()
+	else:
+		print '[-] Something went wrong when trying to write in ' + RESULTS_FILENAME + '.'
+
+
+
+
+
+"""
 	# Check if there's a file and the number of lines
 	file_length = file_len(LINKS_FILENAME)
 	if file_length == 0:
@@ -114,7 +234,7 @@ def Main():
 
 	results_file.close()
 	print '\n[+] All done, results are in ' + RESULTS_FILENAME 
-
+"""
 
 if __name__ == "__main__":
 	Main()
