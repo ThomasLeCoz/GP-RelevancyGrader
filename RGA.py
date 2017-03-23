@@ -22,6 +22,7 @@ import Queue
 from pprint import pprint
 from itertools import islice
 from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
 
 ## Settings
 LINKS_FILENAME = 'links.txt'
@@ -31,8 +32,6 @@ PROXY_LIST_FILENAME = 'proxies.txt'
 RANDOM_TIME_MIN = 20.1
 RANDOM_TIME_MAX = 60.0
 
-BROWSER_HEADERS = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36', 'referer': 'https://www.google.com/search'}
-
 threadLock = threading.Lock()
 resultsFromThread = {}
 
@@ -41,11 +40,13 @@ class indexScraperThread(threading.Thread):
     The index scraper class helps distribute the load amongst proxified
     threads
     """
-    def __init__(self, scraperId, urls, proxy):
+    def __init__(self, scraperId, urls, proxy, ua):
         threading.Thread.__init__(self)
         self.scraperId = scraperId
         self.urls = urls.keys()
         self.proxy = proxy
+        self.headers= {'User-Agent': str(ua), 'referer': 'https://www.google.com/search'}
+        pprint(self.headers)
 
     def run(self):
 
@@ -53,7 +54,7 @@ class indexScraperThread(threading.Thread):
 
         # For each url in the workList...
         for url in self.urls:
-            page = getPage(url, self.proxy)
+            page = getPage(url, self.proxy, self.headers)
             results[url] = getNumberIndexedPages(page)
             time.sleep(random.uniform(RANDOM_TIME_MIN, RANDOM_TIME_MAX))
         
@@ -140,7 +141,7 @@ def op_duration(file_len, nbOfProxies, RANDOM_TIME_MIN=RANDOM_TIME_MIN, RANDOM_T
     duration = [round(min_time,2), round(max_time, 2)]
     return duration
 
-def getPage(url, proxy):
+def getPage(url, proxy, random_headers):
         """
         Return the page text of the web page corresponding to the
         given URL
@@ -149,7 +150,7 @@ def getPage(url, proxy):
             proxies - Required : http and https proxies to use for the requests
         """
         try:
-            page = requests.get(url, proxy, headers=BROWSER_HEADERS)
+            page = requests.get(url, proxy, headers=random_headers)
             page.encoding = 'utf-8'
             return page.text
             
@@ -218,6 +219,7 @@ def Main():
  
 
     threads = []
+    ua = UserAgent()
 
     workListShare = int(file_length / len(proxies) + 1)
     workListDict = chunks(workList, workListShare)
@@ -227,7 +229,7 @@ def Main():
 
     # Start the threads, 1 by proxy detected
     for proxy in tuple(proxies):
-        scraperThread = indexScraperThread(i, workListDict[i], proxy)
+        scraperThread = indexScraperThread(i, workListDict[i], proxy, ua.random)
         scraperThread.start()
         threads.append(scraperThread)
         i = i + 1
@@ -250,42 +252,6 @@ def Main():
     else:
         print '[-] Something went wrong when trying to write in ' + RESULTS_FILENAME + '.'
 
-
-
-
-
-"""
-    # Check if there's a file and the number of lines
-    file_length = file_len(LINKS_FILENAME)
-    if file_length == 0:
-        print '[-] Looks like ' + LINKS_FILENAME + ' is empty.'
-        sys.exit()
-    else:
-        duration = op_duration(file_length)
-        print '[+] Found ' + LINKS_FILENAME + ' with ' + str(file_length) + ' links. It will take between ' + str(duration[0]) + ' hours and ' + str(duration[1]) + ' hours to complete.'
-    
-    # File to output the results
-    results_file = open(RESULTS_FILENAME, 'w')
-    i = 0
-
-    print '\n'
-    printProgress(i, file_length, prefix = 'Progress:', suffix = 'Complete', barLength = 50)
-
-    with open(LINKS_FILENAME, 'r') as f:
-        for url in f:
-            page = getPage(url)
-            if page != False:
-                index_nb = getNumberIndexedPages(page)
-                results_file.write(str(index_nb) + '\n')
-            else:
-                results_file.write('\n')
-            i += 1
-            printProgress(i, file_length, prefix = 'Progress:', suffix = 'Complete', barLength = 50)
-            time.sleep(random.uniform(RANDOM_TIME_MIN, RANDOM_TIME_MAX))
-
-    results_file.close()
-    print '\n[+] All done, results are in ' + RESULTS_FILENAME 
-"""
 
 if __name__ == "__main__":
     Main()
