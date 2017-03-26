@@ -32,6 +32,9 @@ PROXY_LIST_FILENAME = 'proxies.txt'
 RANDOM_TIME_MIN = 20.1
 RANDOM_TIME_MAX = 60.0
 
+DEBUG = True
+DEBUG_LOG_FILE = 'error.log'
+
 threadLock = threading.Lock()
 resultsFromThread = {}
 
@@ -46,7 +49,6 @@ class indexScraperThread(threading.Thread):
         self.urls = urls.keys()
         self.proxy = proxy
         self.headers= {'User-Agent': str(ua), 'referer': 'https://www.google.com/search'}
-        pprint(self.headers)
 
     def run(self):
 
@@ -62,6 +64,19 @@ class indexScraperThread(threading.Thread):
         threadLock.acquire()
         resultsFromThread.update(results)
         threadLock.release()
+
+def logPageSource(content):
+    """
+    Writes the content of the scraped page if we can't
+    scrape the number of indexed pages.
+    @params:
+        content    - Required : html parsed content
+    """
+    log_file = open(DEBUG_LOG_FILE, 'w')
+    log_file.write(str(content) + '\n')
+    log_file.close()
+
+    return True
 
 def readProxies(proxyList):
     """
@@ -79,8 +94,7 @@ def readProxies(proxyList):
                 formattedProxy = 'http://' + proxyCoord[2] + ':' + proxyCoord[3] + '@' + proxyCoord[0] + ':' + proxyCoord[1]
                 proxyResult.append(formattedProxy)
     except EnvironmentError:
-        print '[-] Couldn\'t find ' + PROXY_LIST_FILENAME + ' in the working direcotry.'
-        sys.exit()
+        print '[-] Couldn\'t find ' + PROXY_LIST_FILENAME + ' in the working direcotry. Assuming no proxies and using your own IP address.'
 
     return proxyResult
 
@@ -136,6 +150,8 @@ def printProgress (iteration, total, prefix = '', suffix = '', decimals = 1, bar
     sys.stdout.flush()
 
 def op_duration(file_len, nbOfProxies, RANDOM_TIME_MIN=RANDOM_TIME_MIN, RANDOM_TIME_MAX=RANDOM_TIME_MAX):
+    if nbOfProxies == 0:
+        nbOfProxies = 1
     min_time = ( file_len * RANDOM_TIME_MIN ) / ( 3600 * nbOfProxies )
     max_time = ( file_len * RANDOM_TIME_MAX ) / ( 3600 * nbOfProxies )
     duration = [round(min_time,2), round(max_time, 2)]
@@ -150,7 +166,11 @@ def getPage(url, proxy, random_headers):
             proxies - Required : http and https proxies to use for the requests
         """
         try:
-            page = requests.get(url, proxy, headers=random_headers)
+            if proxy is not None:
+                page = requests.get(url, proxy, headers=random_headers)
+            else:
+                page = requests.get(url, headers=random_headers)
+
             page.encoding = 'utf-8'
             return page.text
             
@@ -172,7 +192,9 @@ def getNumberIndexedPages(page):
             number_indexed_pages = filter(None, res_index.group())
         else:
             print '\n\n[-] Coudln\'t find the number of pages of the Google index. Two possibilities: first, your IP might have been temporarily flagged by Google, wait 2 hours or use a VPN to solve this. The other possibility is that there\'s a bad link in your ' + str(LINKS_FILENAME) + ' file.'
-            number_indexed_pages = False
+            if DEBUG:
+                logPageSource(content)
+            number_indexed_pages = None
             
         return number_indexed_pages
 
@@ -202,11 +224,9 @@ def Main():
     proxies = readProxies(PROXY_LIST_FILENAME)
     workList = createWorkList(LINKS_FILENAME)
 
-    # TODO accomodate if no proxies
     nbOfProxies = len(proxies)
     if nbOfProxies == 0:
-        print '[-] No proxies found in ' + PROXY_LIST_FILENAME + '. Exiting.'
-        sys.exit()
+        print '[-] No proxies found in ' + PROXY_LIST_FILENAME + '. Working with your real IP address.'
 
     file_length = len(workList)
     if file_length == 0:
@@ -220,19 +240,27 @@ def Main():
 
     threads = []
     ua = UserAgent()
+    uaList = [ua.chrome, ua.firefox, ua.ff, ua.safari]
 
-    workListShare = int(file_length / len(proxies) + 1)
+    workListShare = int(file_length / (len(proxies) + 1))
     workListDict = chunks(workList, workListShare)
 
     i = 0
 
 
     # Start the threads, 1 by proxy detected
-    for proxy in tuple(proxies):
-        scraperThread = indexScraperThread(i, workListDict[i], proxy, ua.random)
+    if nbOfProxies != 0:
+        for proxy in tuple(proxies):
+            browser = uaList[random.randint(0, 3)]
+            scraperThread = indexScraperThread(i, workListDict[i], proxy, browser)
+            scraperThread.start()
+            threads.append(scraperThread)
+            i = i + 1
+    else:
+        browser = uaList[random.randint(0, 3)]
+        scraperThread = indexScraperThread(i, workListDict[i], None, browser)
         scraperThread.start()
         threads.append(scraperThread)
-        i = i + 1
 
     # Wait for all threads to finish
     for t in threads:
