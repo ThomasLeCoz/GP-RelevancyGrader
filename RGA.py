@@ -91,7 +91,14 @@ def readProxies(proxyList):
         with open(proxyList) as f:
             for proxyLine in f.read().splitlines():
                 proxyCoord = re.split(':',proxyLine)
-                formattedProxy = 'http://' + proxyCoord[2] + ':' + proxyCoord[3] + '@' + proxyCoord[0] + ':' + proxyCoord[1]
+                if proxyLine.count(':') == 3:
+                    formattedProxy = 'https://' + proxyCoord[2] + ':' + proxyCoord[3] + '@' + proxyCoord[0] + ':' + proxyCoord[1]
+                elif proxyLine.count(':') == 1:
+                    formattedProxy = 'https://' + proxyCoord[0] + ':' + proxyCoord[1]
+                else :
+                    print '[-] Not sure about the format of your proxies, please use IP:PORT or IP:POST:USER:PASS . Exiting.'
+                    sys.exit()
+
                 proxyResult.append(formattedProxy)
     except EnvironmentError:
         print '[-] Couldn\'t find ' + PROXY_LIST_FILENAME + ' in the working direcotry. Assuming no proxies and using your own IP address.'
